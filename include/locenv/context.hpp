@@ -28,6 +28,9 @@ namespace locenv {
 
 	public:
 		context &operator=(const context &) = delete;
+
+	public:
+		static const context &get(lua lua, int index);
 	};
 }
 
