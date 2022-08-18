@@ -8,6 +8,14 @@
 #include <string>
 
 namespace locenv {
+	struct bootstrap_context {
+		std::uint32_t revision;
+		const char *name;
+		const void *locenv;
+		::locenv::lua lua;
+		const char *working_directory;
+	};
+
 	class context final {
 	public:
 		std::string module_name;
@@ -20,14 +28,6 @@ namespace locenv {
 
 	public:
 		context &operator=(const context &) = delete;
-	};
-
-	struct bootstrap_context {
-		std::uint32_t revision;
-		const char *name;
-		const void *locenv;
-		::locenv::lua lua;
-		const char *working_directory;
 	};
 }
 
