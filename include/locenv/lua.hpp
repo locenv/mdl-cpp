@@ -31,13 +31,6 @@ namespace locenv {
 		const char *name;
 		lua_function func;
 	};
-
-	inline int lua_upvalue(int i)
-	{
-		return LUA_REGISTRYINDEX - i;
-	}
-
-	void lua_pop(lua lua, int count);
 }
 
 #endif // LOCENV_LUA_HPP_INCLUDED

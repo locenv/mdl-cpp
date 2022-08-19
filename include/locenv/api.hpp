@@ -1,10 +1,13 @@
 #ifndef LOCENV_API_HPP_INCLUDED
 #define LOCENV_API_HPP_INCLUDED
 
+#include "context.hpp"
 #include "lua.hpp"
 
 #include <cinttypes>
 #include <cstddef>
+#include <sstream>
+#include <utility>
 
 namespace locenv {
 	struct api_table {
@@ -118,6 +121,56 @@ namespace locenv {
 	};
 
 	extern const api_table *api;
+
+	void lua_pop(lua lua, int count);
+
+	inline int lua_upvalue(int i)
+	{
+		return LUA_REGISTRYINDEX - i;
+	}
+
+	template<class T, class... Args>
+	void lua_new_userdata(lua lua, int context, Args &&...args)
+	{
+		// Get table name.
+		std::stringstream table;
+
+		context = api->lua_absindex(lua, context);
+
+		table << ::locenv::context::get(lua, context).module_name;
+		table << '.';
+		table << typeid(T).name();
+
+		// Create userdata.
+		auto ud = api->lua_newuserdatauv(lua, sizeof(T), 0);
+
+		try {
+			new(ud) T(std::forward<Args>(args)...);
+		} catch (...) {
+			lua_pop(lua, 1);
+			throw;
+		}
+
+		// Associate the userdata with metatable.
+		if (api->aux_newmetatable(lua, table.str().c_str())) {
+			api->lua_pushvalue(lua, context);
+			api->lua_pushcclosure(lua, [](::locenv::lua l) -> int {
+				std::stringstream t;
+
+				t << ::locenv::context::get(l, lua_upvalue(1)).module_name;
+				t << '.';
+				t << typeid(T).name();
+
+				reinterpret_cast<T *>(api->aux_checkudata(l, 1, t.str().c_str()))->~T();
+
+				return 0;
+			}, 1);
+
+			api->lua_setfield(lua, -2, "__gc");
+		}
+
+		api->lua_setmetatable(lua, -2);
+	}
 }
 
 #endif // LOCENV_API_HPP_INCLUDED
