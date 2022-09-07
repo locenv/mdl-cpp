@@ -6,7 +6,10 @@
 
 #include <cinttypes>
 #include <cstddef>
+#include <functional>
+#include <initializer_list>
 #include <sstream>
+#include <string>
 #include <utility>
 
 namespace locenv {
@@ -120,6 +123,12 @@ namespace locenv {
 		std::uint32_t (*module_configurations_path) (const void *, const char *, char *, std::uint32_t);
 	};
 
+	template<class T>
+	struct method_table {
+		std::string name;
+		int (T::*function) (::locenv::lua);
+	};
+
 	extern const api_table *api;
 
 	void lua_pop(lua lua, int count);
@@ -129,19 +138,25 @@ namespace locenv {
 		return LUA_REGISTRYINDEX - i;
 	}
 
-	template<class T, class... Args>
-	void lua_new_userdata(lua lua, int context, Args &&...args)
+	template<class T>
+	std::string lua_type_name(lua lua, int context)
 	{
-		// Get table name.
-		std::stringstream table;
+		std::stringstream v;
 
+		v << ::locenv::context::get(lua, context).module_name;
+		v << '.';
+		v << typeid(T).name();
+
+		return v.str();
+	}
+
+	template<class T, class... Args>
+	T * lua_new_userdata(lua lua, int context, Args &&...args)
+	{
 		context = api->lua_absindex(lua, context);
 
-		table << ::locenv::context::get(lua, context).module_name;
-		table << '.';
-		table << typeid(T).name();
-
 		// Create userdata.
+		auto table = lua_type_name<T>(lua, context);
 		auto ud = api->lua_newuserdatauv(lua, sizeof(T), 0);
 
 		try {
@@ -152,16 +167,12 @@ namespace locenv {
 		}
 
 		// Associate the userdata with metatable.
-		if (api->aux_newmetatable(lua, table.str().c_str())) {
+		if (api->aux_newmetatable(lua, table.c_str())) {
 			api->lua_pushvalue(lua, context);
 			api->lua_pushcclosure(lua, [](::locenv::lua l) -> int {
-				std::stringstream t;
+				auto t = lua_type_name<T>(l, lua_upvalue(1));
 
-				t << ::locenv::context::get(l, lua_upvalue(1)).module_name;
-				t << '.';
-				t << typeid(T).name();
-
-				reinterpret_cast<T *>(api->aux_checkudata(l, 1, t.str().c_str()))->~T();
+				reinterpret_cast<T *>(api->aux_checkudata(l, 1, t.c_str()))->~T();
 
 				return 0;
 			}, 1);
@@ -170,6 +181,76 @@ namespace locenv {
 		}
 
 		api->lua_setmetatable(lua, -2);
+	}
+
+	template<class T, class... Args>
+	T * lua_new_object(lua lua, int context, Args &&...args)
+	{
+		context = api->lua_absindex(lua, context);
+
+		// Create userdata.
+		auto table = lua_type_name<T>(lua, context);
+		auto ud = api->lua_newuserdatauv(lua, sizeof(T), 0);
+
+		try {
+			new(ud) T(std::forward<Args>(args)...);
+		} catch (...) {
+			lua_pop(lua, 1);
+			throw;
+		}
+
+		// Associate the userdata with metatable.
+		if (api->aux_newmetatable(lua, table.c_str())) {
+			// Set GC metamethod.
+			api->lua_pushvalue(lua, context);
+			api->lua_pushcclosure(lua, [](::locenv::lua l) -> int {
+				auto t = lua_type_name<T>(l, lua_upvalue(1));
+
+				reinterpret_cast<T *>(api->aux_checkudata(l, 1, t.c_str()))->~T();
+
+				return 0;
+			}, 1);
+
+			api->lua_setfield(lua, -2, "__gc");
+
+			// Set additional metamethod.
+			try {
+				T::setup(lua, context);
+			} catch (...) {
+				lua_pop(lua, 2); // metatable + userdata
+
+				api->lua_pushnil(lua);
+				api->lua_setfield(lua, LUA_REGISTRYINDEX, table.c_str());
+
+				throw;
+			}
+		}
+
+		api->lua_setmetatable(lua, -2);
+	}
+
+	template<class T>
+	void lua_new_method_table(lua lua, int context, std::initializer_list<method_table<T>> methods)
+	{
+		context = api->lua_absindex(lua, context);
+
+		api->lua_createtable(lua, 0, methods.size());
+
+		for (auto m : methods) {
+			api->lua_pushvalue(lua, context);
+			api->lua_pushlightuserdata(lua, m->function);
+			api->lua_pushcclosure(lua, [](::locenv::lua l) -> int {
+				auto t = lua_type_name<T>(l, lua_upvalue(1));
+				auto m = reinterpret_cast<int (T::*) (::locenv::lua)>(api->lua_touserdata(l, lua_upvalue(2)));
+				auto o = reinterpret_cast<T *>(api->aux_checkudata(l, 1, t.c_str()));
+
+				return std::invoke(m, o, l);
+			}, 2);
+
+			api->lua_setfield(lua, -2, m->name.c_str());
+		}
+
+		api->lua_setfield(lua, -2, "__index");
 	}
 }
 
