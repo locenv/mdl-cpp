@@ -181,6 +181,8 @@ namespace locenv {
 		}
 
 		api->lua_setmetatable(lua, -2);
+
+		return reinterpret_cast<T *>(ud);
 	}
 
 	template<class T, class... Args>
@@ -227,6 +229,8 @@ namespace locenv {
 		}
 
 		api->lua_setmetatable(lua, -2);
+
+		return reinterpret_cast<T *>(ud);
 	}
 
 	template<class T>
