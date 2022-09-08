@@ -7,7 +7,6 @@
 #include <cinttypes>
 #include <cstddef>
 #include <functional>
-#include <initializer_list>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -123,12 +122,6 @@ namespace locenv {
 		std::uint32_t (*module_configurations_path) (const void *, const char *, char *, std::uint32_t);
 	};
 
-	template<class T>
-	struct method_table {
-		std::string name;
-		int (T::*function) (::locenv::lua);
-	};
-
 	extern const api_table *api;
 
 	void lua_pop(lua lua, int count);
@@ -233,28 +226,43 @@ namespace locenv {
 		return reinterpret_cast<T *>(ud);
 	}
 
-	template<class T>
-	void lua_new_method_table(lua lua, int context, std::initializer_list<method_table<T>> methods)
+	template<class S>
+	void lua_new_method_table(lua lua, int context, S setup)
 	{
 		context = api->lua_absindex(lua, context);
 
-		api->lua_createtable(lua, 0, methods.size());
-
-		for (auto m : methods) {
-			api->lua_pushvalue(lua, context);
-			api->lua_pushlightuserdata(lua, m->function);
-			api->lua_pushcclosure(lua, [](::locenv::lua l) -> int {
-				auto t = lua_type_name<T>(l, lua_upvalue(1));
-				auto m = reinterpret_cast<int (T::*) (::locenv::lua)>(api->lua_touserdata(l, lua_upvalue(2)));
-				auto o = reinterpret_cast<T *>(api->aux_checkudata(l, 1, t.c_str()));
-
-				return std::invoke(m, o, l);
-			}, 2);
-
-			api->lua_setfield(lua, -2, m->name.c_str());
-		}
-
+		api->lua_createtable(lua, 0, 0);
+		setup(lua, context);
 		api->lua_setfield(lua, -2, "__index");
+	}
+
+	template<class T>
+	void lua_new_method(lua lua, int context, const char *name, int (T::*function) (::locenv::lua))
+	{
+		union {
+			int (T::*f) (::locenv::lua);
+			void *v;
+		} f;
+
+		f.f = function;
+
+		api->lua_pushvalue(lua, context);
+		api->lua_pushlightuserdata(lua, f.v);
+		api->lua_pushcclosure(lua, [](::locenv::lua l) -> int {
+			union {
+				int (T::*f) (::locenv::lua);
+				void *v;
+			} m;
+
+			auto t = lua_type_name<T>(l, lua_upvalue(1));
+			auto o = reinterpret_cast<T *>(api->aux_checkudata(l, 1, t.c_str()));
+
+			m.v = api->lua_touserdata(l, lua_upvalue(2));
+
+			return std::invoke(m.f, o, l);
+		}, 2);
+
+		api->lua_setfield(lua, -2, name);
 	}
 }
 
